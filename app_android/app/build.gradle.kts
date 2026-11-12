@@ -14,8 +14,8 @@ android {
         applicationId = "com.contapuntos.app"
         minSdk = 28          // Android 9 o más nuevo
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
         // celulares reales; deja el .apk más liviano. Para el emulador de la PC: gradlew assembleDebug -Pabis=x86_64
         ndk { abiFilters += (findProperty("abis") as String?)?.split(",") ?: listOf("arm64-v8a", "armeabi-v7a") }
     }
