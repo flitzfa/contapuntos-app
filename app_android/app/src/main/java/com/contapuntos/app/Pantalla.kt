@@ -612,7 +612,7 @@ private fun AvisoActualizacion() {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Ciruela.copy(alpha = 0.6f))
+            .background(Ciruela.copy(alpha = 0.85f))
             .pointerInput(Unit) { detectTapGestures { } }, // que no se toque lo de atrás
         contentAlignment = Alignment.BottomCenter,
     ) {
@@ -621,7 +621,9 @@ private fun AvisoActualizacion() {
                 .systemBarsPadding()
                 .padding(12.dp)
                 .fillMaxWidth()
-                .vidrio(RoundedCornerShape(32.dp), 0.18f)
+                // fondo casi opaco: si no, el texto de la pantalla de atrás se lee a través del vidrio
+                .background(Color(0xFF3A1D48).copy(alpha = 0.97f), RoundedCornerShape(32.dp))
+                .vidrio(RoundedCornerShape(32.dp), 0.12f)
                 .padding(20.dp),
         ) {
             Text("Hay una versión nueva", fontFamily = Fredoka, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, color = Crema)
