@@ -1,10 +1,26 @@
 package com.contapuntos.app
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.graphics.Matrix
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import java.util.concurrent.Executors
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
@@ -164,7 +180,26 @@ fun ContapuntosApp(detector: Lazy<Detector>) {
         }
         val elegirFoto: () -> Unit = { galeria.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 
-        BackHandler(enabled = foto != null) {
+        // Al declarar el permiso de cámara (para el modo en vivo), Android también lo exige para "Sacar foto".
+        var trasPermiso by remember { mutableStateOf<(() -> Unit)?>(null) }
+        val permiso = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+            if (ok) trasPermiso?.invoke() else error = "Sin permiso para la cámara no puedo contar. Podés elegir una foto de la galería."
+            trasPermiso = null
+        }
+        fun conCamara(accion: () -> Unit) {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                accion()
+            } else {
+                trasPermiso = accion
+                permiso.launch(Manifest.permission.CAMERA)
+            }
+        }
+        var enVivo by remember { mutableStateOf(false) }
+        val abrirEnVivo: () -> Unit = { conCamara { error = null; enVivo = true } }
+        val sacarFotoConPermiso: () -> Unit = { conCamara(sacarFoto) }
+
+        BackHandler(enabled = foto != null || enVivo) {
+            enVivo = false
             foto = null
             candidatos = null
             error = null
@@ -173,10 +208,21 @@ fun ContapuntosApp(detector: Lazy<Detector>) {
         Box(Modifier.fillMaxSize().background(Ciruela)) {
             Fondo(foto)
             val f = foto
-            if (f == null) {
-                Inicio(error, sacarFoto, elegirFoto)
+            if (enVivo) {
+                EnVivo(
+                    detector,
+                    onCongelar = { bmp, c ->
+                        foto = bmp
+                        candidatos = c
+                        tanda++
+                        enVivo = false
+                    },
+                    onVolver = { enVivo = false },
+                )
+            } else if (f == null) {
+                Inicio(error, abrirEnVivo, sacarFotoConPermiso, elegirFoto)
             } else {
-                Resultado(f, candidatos, tanda, error, sacarFoto, elegirFoto)
+                Resultado(f, candidatos, tanda, error, abrirEnVivo, elegirFoto)
             }
             AvisoActualizacion()
         }
@@ -216,7 +262,7 @@ private fun Fondo(foto: Bitmap?) {
 }
 
 @Composable
-private fun Inicio(error: String?, sacarFoto: () -> Unit, elegirFoto: () -> Unit) {
+private fun Inicio(error: String?, enVivo: () -> Unit, sacarFoto: () -> Unit, elegirFoto: () -> Unit) {
     Column(
         Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp),
     ) {
@@ -230,7 +276,7 @@ private fun Inicio(error: String?, sacarFoto: () -> Unit, elegirFoto: () -> Unit
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            "Sacá una foto de la aguja entera, desde arriba y sobre un fondo liso. Yo los cuento.",
+            "Apuntá la cámara a la aguja entera, desde arriba y sobre un fondo liso. Yo los cuento.",
             fontSize = 17.sp, lineHeight = 25.sp, color = Crema.copy(alpha = 0.78f),
         )
         if (error != null) {
@@ -242,11 +288,132 @@ private fun Inicio(error: String?, sacarFoto: () -> Unit, elegirFoto: () -> Unit
             Modifier.fillMaxWidth().vidrio(RoundedCornerShape(32.dp)).padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BotonPrincipal("Sacar foto", sacarFoto, Modifier.fillMaxWidth())
-            BotonVidrio("Elegir de la galería", elegirFoto, Modifier.fillMaxWidth())
+            BotonPrincipal("Contar en vivo", enVivo, Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotonVidrio("Sacar foto", sacarFoto, Modifier.weight(1f))
+                BotonVidrio("Galería", elegirFoto, Modifier.weight(1f))
+            }
         }
     }
 }
+
+/** Lo último que contó la cámara en vivo: el cuadro y lo que encontró en él. */
+private class Cuadro(val foto: Bitmap, val candidatos: List<Candidato>) {
+    val puntos = filtrar(candidatos, confianza(SENS_INICIAL)).map { candidatos[it] }
+    // tamaño del puntito, igual que en Resultado
+    val radio = puntos.map { minOf(it.x1 - it.x0, it.y1 - it.y0) }.sorted().let { if (it.isEmpty()) 0f else it[it.size / 2] * 0.3f }
+}
+
+/** Cámara en vivo: cuenta lo que se ve, una y otra vez, y lo marca encima de la imagen.
+ *  "Congelar" pasa el último cuadro contado a la pantalla de resultado, para revisarlo y corregirlo. */
+@Composable
+private fun EnVivo(detector: Lazy<Detector>, onCongelar: (Bitmap, List<Candidato>) -> Unit, onVolver: () -> Unit) {
+    val ctx = LocalContext.current
+    val dueño = LocalLifecycleOwner.current
+    var cuadro by remember { mutableStateOf<Cuadro?>(null) }
+    var fallo by remember { mutableStateOf<String?>(null) }
+    val vistaCamara = remember {
+        PreviewView(ctx).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE // si no, no respeta las esquinas redondeadas
+            scaleType = PreviewView.ScaleType.FIT_CENTER // la imagen entera, para que los puntitos caigan en su lugar
+        }
+    }
+    DisposableEffect(dueño) {
+        var activo = true
+        val ejecutor = Executors.newSingleThreadExecutor()
+        val futuro = ProcessCameraProvider.getInstance(ctx)
+        // vista y análisis en 4:3, así los dos ven lo mismo
+        val cuatroTercios = AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+        futuro.addListener({
+            if (!activo) return@addListener
+            val proveedor = futuro.get()
+            val vista = Preview.Builder()
+                .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(cuatroTercios).build())
+                .build()
+            vista.setSurfaceProvider(vistaCamara.surfaceProvider)
+            val analisis = ImageAnalysis.Builder()
+                .setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(cuatroTercios)
+                        // el modelo trabaja a 960, más grande no suma
+                        .setResolutionStrategy(ResolutionStrategy(android.util.Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                        .build(),
+                )
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // si el celu tarda, saltea cuadros
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .build()
+            analisis.setAnalyzer(ejecutor) { img ->
+                val bmp = img.use { girar(it.toBitmap(), it.imageInfo.rotationDegrees) }
+                runCatching { detector.value.candidatos(bmp) }.onSuccess { if (activo) cuadro = Cuadro(bmp, it) }
+            }
+            proveedor.unbindAll()
+            runCatching { proveedor.bindToLifecycle(dueño, CameraSelector.DEFAULT_BACK_CAMERA, vista, analisis) }
+                .onFailure { fallo = "No pude abrir la cámara. Probá con Sacar foto o con la galería." }
+        }, ContextCompat.getMainExecutor(ctx))
+        onDispose {
+            activo = false
+            if (futuro.isDone) runCatching { futuro.get().unbindAll() }
+            ejecutor.shutdown()
+        }
+    }
+
+    val c = cuadro
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.Black.copy(alpha = 0.25f))
+                .semantics { contentDescription = "Cámara en vivo con ${c?.puntos?.size ?: 0} puntos marcados" },
+        ) {
+            AndroidView({ vistaCamara }, Modifier.fillMaxSize())
+            Canvas(Modifier.fillMaxSize()) {
+                val k = c ?: return@Canvas
+                val v = Vista(size, k.foto.width, k.foto.height, 1f, Offset.Zero)
+                val r = (k.radio * v.escala).coerceIn(3.dp.toPx(), 10.dp.toPx())
+                for (p in k.puntos) {
+                    val o = v.aPantalla(p.cx, p.cy)
+                    drawCircle(Crema, r + 1.5.dp.toPx(), o)
+                    drawCircle(Rosa, r, o)
+                }
+            }
+        }
+        Column(Modifier.fillMaxWidth().vidrio(RoundedCornerShape(32.dp)).padding(horizontal = 20.dp, vertical = 16.dp)) {
+            when {
+                fallo != null -> Aviso(fallo!!)
+                c == null -> Text("Abriendo la cámara…", fontFamily = Fredoka, fontWeight = FontWeight.Medium, fontSize = 24.sp, color = Crema)
+                else -> Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        "${c.puntos.size}",
+                        fontFamily = Fredoka, fontWeight = FontWeight.SemiBold,
+                        fontSize = 64.sp, lineHeight = 64.sp, color = Crema,
+                        style = TextStyle(fontFeatureSettings = "tnum"),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        if (c.puntos.size == 1) "punto" else "puntos",
+                        fontFamily = Fredoka, fontWeight = FontWeight.Medium, fontSize = 22.sp,
+                        color = Crema.copy(alpha = 0.8f), modifier = Modifier.padding(bottom = 10.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Apuntá a la aguja entera, desde arriba. Cuando el número se quede quieto, tocá Congelar para ver cada punto numerado y corregir.",
+                fontSize = 14.sp, lineHeight = 20.sp, color = Crema.copy(alpha = 0.75f),
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotonVidrio("Volver", onVolver, Modifier.weight(1f))
+                BotonPrincipal("Congelar", { c?.let { onCongelar(it.foto, it.candidatos) } }, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+private fun girar(b: Bitmap, grados: Int): Bitmap =
+    if (grados == 0) b else Bitmap.createBitmap(b, 0, 0, b.width, b.height, Matrix().apply { postRotate(grados.toFloat()) }, true)
 
 /** Dibujo de portada: la aguja con siete puntos montados y su puntito de conteo. */
 @Composable
@@ -399,7 +566,7 @@ private fun Resultado(
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                BotonPrincipal("Otra foto", sacarFoto, Modifier.weight(1f))
+                BotonPrincipal("En vivo", sacarFoto, Modifier.weight(1f))
                 BotonVidrio("Galería", elegirFoto, Modifier.weight(1f))
             }
         }

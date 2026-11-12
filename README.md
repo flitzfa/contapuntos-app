@@ -140,10 +140,13 @@ necesita internet: el modelo va adentro de la app y cuenta en el mismo celu.
 - El código de la app está en `app_android/` (Kotlin + Jetpack Compose). El modelo se pasa a
   `modelos/detector_puntos.onnx` y se copia adentro al armarla.
 
-En la app: **Sacar foto** o **Elegir de la galería**, y muestra el total con un puntito sobre
-cada punto. Se puede tocar un puntito para sacarlo, tocar donde falta uno para sumarlo,
+En la app: **Contar en vivo** abre la cámara y va marcando los puntos y el total mientras se
+apunta a la aguja (se actualiza cada vez que termina de contar una imagen; cuánto tarda depende
+del celu). **Congelar** se queda con lo que se ve y pasa a la pantalla de revisión. También
+están **Sacar foto** y **Galería**. En la revisión muestra el total con un puntito numerado
+sobre cada punto. Se puede tocar un puntito para sacarlo, tocar donde falta uno para sumarlo,
 pellizcar para acercar (doble toque vuelve) y mover la sensibilidad, igual que en la página
-del paso 3.
+del paso 3. La primera vez pide permiso para usar la cámara.
 
 Para probarla en la PC sin celular: `app_android\gradlew assembleDebug -Pabis=x86_64`
 arma una versión para el emulador de Android Studio.
