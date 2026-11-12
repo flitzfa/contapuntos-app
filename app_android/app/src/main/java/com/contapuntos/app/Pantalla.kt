@@ -2,9 +2,12 @@ package com.contapuntos.app
 
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -173,6 +176,7 @@ fun ContapuntosApp(detector: Lazy<Detector>) {
             } else {
                 Resultado(f, candidatos, tanda, error, sacarFoto, elegirFoto)
             }
+            AvisoActualizacion()
         }
     }
 }
@@ -570,4 +574,81 @@ private fun Aviso(texto: String) {
         fontSize = 15.sp, lineHeight = 21.sp, color = Ciruela,
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Mostaza).padding(14.dp),
     )
+}
+
+/** Al abrir la app busca una versión nueva en GitHub y, si hay, ofrece bajarla e instalarla. */
+@Composable
+private fun AvisoActualizacion() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var nueva by remember { mutableStateOf<Actualizador.Version?>(null) }
+    var progreso by remember { mutableStateOf<Float?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { nueva = Actualizador.buscar(ctx) }
+
+    val v = nueva ?: return
+    val bajando = progreso != null
+
+    fun actualizar() {
+        error = null
+        // Android pide habilitar una sola vez "Permitir de esta fuente" para que la app se pueda actualizar
+        if (!ctx.packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(ctx, "Activá \"Permitir de esta fuente\" y volvé a tocar Actualizar", Toast.LENGTH_LONG).show()
+            ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}")))
+            return
+        }
+        scope.launch {
+            progreso = 0f
+            try {
+                val apk = Actualizador.bajar(ctx, v) { progreso = it }
+                Actualizador.instalar(ctx, apk) { error = "No se pudo actualizar: $it" }
+            } catch (e: Exception) {
+                error = "No se pudo bajar la versión nueva. Revisá la conexión y probá de nuevo."
+            }
+            progreso = null
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Ciruela.copy(alpha = 0.6f))
+            .pointerInput(Unit) { detectTapGestures { } }, // que no se toque lo de atrás
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier
+                .systemBarsPadding()
+                .padding(12.dp)
+                .fillMaxWidth()
+                .vidrio(RoundedCornerShape(32.dp), 0.18f)
+                .padding(20.dp),
+        ) {
+            Text("Hay una versión nueva", fontFamily = Fredoka, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, color = Crema)
+            Spacer(Modifier.height(4.dp))
+            Text("Contapuntos ${v.nombre}", fontSize = 15.sp, color = Crema.copy(alpha = 0.7f))
+            if (v.notas.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(v.notas, fontSize = 16.sp, lineHeight = 23.sp, color = Crema)
+            }
+            error?.let {
+                Spacer(Modifier.height(12.dp))
+                Aviso(it)
+            }
+            progreso?.let { p ->
+                Spacer(Modifier.height(16.dp))
+                LinearProgressIndicator(
+                    progress = { p }, modifier = Modifier.fillMaxWidth(),
+                    color = Rosa, trackColor = Crema.copy(alpha = 0.15f),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("Bajando… ${(p * 100).toInt()}%", fontSize = 14.sp, color = Crema.copy(alpha = 0.8f))
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotonVidrio("Más tarde", { if (!bajando) nueva = null }, Modifier.weight(1f))
+                BotonPrincipal(if (bajando) "Bajando…" else "Actualizar", { if (!bajando) actualizar() }, Modifier.weight(1f))
+            }
+        }
+    }
 }

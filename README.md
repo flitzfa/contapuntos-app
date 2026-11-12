@@ -148,6 +148,41 @@ del paso 3.
 Para probarla en la PC sin celular: `app_android\gradlew assembleDebug -Pabis=x86_64`
 arma una versión para el emulador de Android Studio.
 
+## Paso 6: publicar una actualización
+
+Desde la versión 0.2 la app se actualiza sola: al abrirse busca si hay una versión nueva
+y, si hay, muestra "Hay una versión nueva" con **Actualizar** / **Más tarde**. La primera vez
+Android pide activar "Permitir de esta fuente" para Contapuntos; después ya no.
+
+Para publicar una versión nueva:
+
+1. Hacé los cambios y guardalos en Git:
+   ```
+   git add -A
+   git commit -m "Qué cambié"
+   ```
+2. Publicala:
+   ```
+   python 6_publicar_actualizacion.py "Lo que va a leer en el celu, por ejemplo: cuenta mejor con la aguja parada"
+   ```
+
+El script sube el número de versión, arma la app, la publica en
+https://github.com/flitzfa/contapuntos-app (Releases) y guarda la versión en Git con su
+etiqueta (`v0.3`, `v0.4`...). Ese repositorio es público y solo tiene las versiones
+publicadas, no el código.
+
+Importante:
+- Hay que armarla **en esta PC**: la app va firmada con la clave de Android de esta PC
+  (`%USERPROFILE%\.android\debug.keystore`). Un celu solo acepta una actualización firmada
+  con la misma clave que la app instalada. Si cambiás de PC, copiá ese archivo antes.
+- Necesita `gh` (GitHub CLI) con la sesión iniciada (`gh auth login`).
+
+## Historial (Git)
+
+El proyecto está en Git (no se suben los datasets, resultados, `venv` ni el `.env`).
+`git log --oneline` muestra los cambios, y cada versión publicada tiene su etiqueta:
+`git checkout v0.2` vuelve al código exacto de esa versión (`git checkout main` para volver).
+
 ## Qué tocar si cuenta mal
 
 | Problema | Qué probar |
