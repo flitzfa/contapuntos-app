@@ -44,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -57,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -294,10 +296,16 @@ private fun Resultado(
 
     val conf = confianza(sens)
     val elegidos = remember(candidatos, conf) { candidatos?.let { filtrar(it, conf) } ?: emptyList() }
-    val puntos = if (candidatos == null) emptyList() else ordenar(
-        elegidos.filter { it !in sacados }.map { Punto(candidatos[it].cx, candidatos[it].cy, it) } +
-            agregados.mapIndexed { k, o -> Punto(o.x, o.y, -1 - k) },
-    )
+    // los puntos separados por aguja; se recalcula solo si cambian la sensibilidad o las correcciones a mano
+    val grupos = remember(candidatos, elegidos, sacados, agregados) {
+        derivedStateOf {
+            if (candidatos == null) emptyList() else agujas(
+                elegidos.filter { it !in sacados }.map { Punto(candidatos[it].cx, candidatos[it].cy, it) } +
+                    agregados.mapIndexed { k, o -> Punto(o.x, o.y, -1 - k) },
+            )
+        }
+    }.value
+    val puntos = remember(grupos) { grupos.flatten() }
     // tamaño del puntito: un tercio del punto de tejido típico de esta foto
     val radioFoto = remember(candidatos, conf) {
         val lados = elegidos.map { minOf(candidatos!![it].x1 - candidatos[it].x0, candidatos[it].y1 - candidatos[it].y0) }.sorted()
@@ -326,7 +334,7 @@ private fun Resultado(
 
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         FotoConPuntos(
-            foto, puntos, visibles, numeros, radioFoto, pasoTipico(puntos), tanda, enfoque,
+            foto, puntos, grupos, visibles, numeros, radioFoto, pasoTipico(grupos), tanda, enfoque,
             onToque = { p, radioToque ->
                 val cerca = puntos.minByOrNull { (it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y) }
                 val d2 = cerca?.let { (it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y) }
@@ -415,6 +423,7 @@ private class Vista(tam: Size, iw: Int, ih: Int, val zoom: Float, val d: Offset)
 private fun FotoConPuntos(
     foto: Bitmap,
     puntos: List<Punto>,
+    grupos: List<List<Punto>>,
     visibles: Float,
     numeros: Boolean,
     radioFoto: Float,
@@ -429,10 +438,10 @@ private fun FotoConPuntos(
     var zoom by remember(foto) { mutableFloatStateOf(1f) }
     var desplaz by remember(foto) { mutableStateOf(Offset.Zero) }
     val medidor = rememberTextMeasurer()
-    val estiloNumero = TextStyle(
-        color = Crema, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-        shadow = Shadow(Color.Black.copy(alpha = 0.85f), blurRadius = 4f),
-    )
+    val estiloNumero = TextStyle(color = Ciruela, fontSize = 14.sp, fontFamily = Fredoka, fontWeight = FontWeight.SemiBold)
+    // por cada punto, hacia dónde va su etiqueta (según su aguja); y dónde empieza cada aguja en la lista
+    val normales = remember(grupos) { grupos.flatMap { g -> val n = normalAguja(g); List(g.size) { n } } }
+    val inicios = remember(grupos) { grupos.runningFold(0) { acc, g -> acc + g.size }.dropLast(1) }
     // al terminar de contar, acerca la foto suavemente a los puntos (las fotos suelen tener mucho fondo).
     // El destino se recalcula en cada cuadro porque el marco cambia de tamaño cuando aparece el panel.
     LaunchedEffect(tanda) {
@@ -503,21 +512,76 @@ private fun FotoConPuntos(
                 val c = v.aPantalla(p.x, p.y)
                 drawCircle(Crema, r * k + borde, c)
                 drawCircle(if (p.indice >= 0) Rosa else Salvia, r * k, c)
-                // número solo si entra entre un punto y el siguiente
-                if (numeros && t >= 1f && pasoFoto * v.escala >= 16.dp.toPx()) {
-                    val txt = medidor.measure("${i + 1}", estiloNumero)
-                    drawText(txt, topLeft = c + Offset(r * 0.7f, -r - txt.size.height * 0.75f))
+            }
+            if (!numeros || puntos.isEmpty()) return@Canvas
+
+            // Etiquetas: un cartelito con el número al costado de cada punto, del lado de afuera de la aguja.
+            val s = pasoFoto * v.escala // distancia en pantalla entre un punto y el siguiente
+            val anchoMax = medidor.measure("${puntos.size}", estiloNumero).size.width + 12.dp.toPx()
+            val alternar = s < anchoMax * 1.15f // muy juntos: uno de cada lado
+            // si ni alternando entran, numera de a 5, 10, 20... (como los marcadores de puntos)
+            val cada = if (2 * s >= anchoMax * 1.15f) 1 else listOf(5, 10, 20, 50, 100).firstOrNull { it * s >= anchoMax * 1.3f } ?: 100
+            // qué puntos llevan número: todos, o los múltiplos de "cada" más el primero y el último de cada aguja
+            val marcar = BooleanArray(puntos.size) { cada == 1 }
+            if (cada > 1) {
+                val margen = kotlin.math.ceil(anchoMax * 1.3f / s).toInt() // cuántos puntos ocupa una etiqueta
+                inicios.forEachIndexed { gi, ini ->
+                    val fin = ini + grupos[gi].size - 1
+                    marcar[ini] = true
+                    for (i in ini..fin) if ((i + 1) % cada == 0 && i - ini >= margen && fin - i >= margen) marcar[i] = true
+                    if (fin - ini >= margen) marcar[fin] = true
                 }
+            }
+            val linea = 1.5.dp.toPx()
+            val separacion = 5.dp.toPx()
+            puntos.forEachIndexed { i, p ->
+                val num = i + 1
+                if (visibles - i < 1f) return@forEachIndexed // aparece cuando termina de aparecer su punto
+                if (!marcar[i]) return@forEachIndexed
+                val lado = if (alternar && cada == 1 && num % 2 == 0) -1f else 1f
+                val txt = medidor.measure("$num", estiloNumero)
+                val w = txt.size.width + 12.dp.toPx()
+                val h = txt.size.height + 4.dp.toPx()
+                val normal = normales[i]
+                val alcance = kotlin.math.abs(normal.x) * w / 2 + kotlin.math.abs(normal.y) * h / 2
+                val c = v.aPantalla(p.x, p.y)
+                val dir = normal * lado
+                val ideal = c + dir * (r + separacion + alcance)
+                // que no quede cortada en el borde del marco
+                val m = 4.dp.toPx()
+                val centro = Offset(
+                    ideal.x.coerceIn(w / 2 + m, maxOf(w / 2 + m, size.width - w / 2 - m)),
+                    ideal.y.coerceIn(h / 2 + m, maxOf(h / 2 + m, size.height - h / 2 - m)),
+                )
+                val esquina = centro - Offset(w / 2, h / 2)
+                drawLine(Crema, c + dir * r, c + dir * (r + separacion), linea)
+                drawRoundRect(Color.Black.copy(alpha = 0.3f), esquina + Offset(0f, 1.dp.toPx()), Size(w, h), CornerRadius(h / 2))
+                drawRoundRect(Crema, esquina, Size(w, h), CornerRadius(h / 2))
+                drawRoundRect(if (p.indice >= 0) Rosa else Salvia, esquina, Size(w, h), CornerRadius(h / 2), style = Stroke(linea))
+                drawText(txt, topLeft = centro - Offset(txt.size.width / 2f, txt.size.height / 2f))
             }
         }
     }
 }
 
+/** Hacia dónde poner las etiquetas: perpendicular a la aguja (la recta que mejor pasa por los puntos),
+ *  del lado de arriba; si la aguja está parada, a la izquierda. */
+private fun normalAguja(p: List<Punto>): Offset {
+    if (p.size < 2) return Offset(0f, -1f)
+    val ang = anguloAguja(p)
+    var nx = -kotlin.math.sin(ang)
+    var ny = kotlin.math.cos(ang)
+    if (ny > 0.05f || (kotlin.math.abs(ny) <= 0.05f && nx > 0)) {
+        nx = -nx
+        ny = -ny
+    }
+    return Offset(nx, ny)
+}
+
 /** Distancia típica entre un punto y el siguiente (la mediana), para saber si entran los números. */
-private fun pasoTipico(p: List<Punto>): Float {
-    if (p.size < 2) return Float.MAX_VALUE
-    val d = p.zipWithNext { a, b -> kotlin.math.hypot(a.x - b.x, a.y - b.y) }.sorted()
-    return d[d.size / 2]
+private fun pasoTipico(grupos: List<List<Punto>>): Float {
+    val d = grupos.flatMap { g -> g.zipWithNext { a, b -> kotlin.math.hypot(a.x - b.x, a.y - b.y) } }.sorted()
+    return if (d.isEmpty()) Float.MAX_VALUE else d[d.size / 2]
 }
 
 /** Crece un poco de más y vuelve: el puntito "salta" al aparecer. */

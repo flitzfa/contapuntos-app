@@ -118,10 +118,62 @@ fun filtrar(c: List<Candidato>, conf: Float, iou: Float = 0.4f, max: Int = 1000)
     return quedan
 }
 
-/** Numera siguiendo la aguja: de izquierda a derecha, o de arriba a abajo si la aguja está parada. */
-fun ordenar(p: List<Punto>): List<Punto> {
+/** Ángulo de la aguja (la recta que mejor pasa por los puntos), en radianes; 0 = horizontal. */
+fun anguloAguja(p: List<Punto>): Float {
+    val mx = p.map { it.x }.average().toFloat()
+    val my = p.map { it.y }.average().toFloat()
+    var sxx = 0f
+    var syy = 0f
+    var sxy = 0f
+    for (q in p) {
+        val dx = q.x - mx
+        val dy = q.y - my
+        sxx += dx * dx
+        syy += dy * dy
+        sxy += dx * dy
+    }
+    return 0.5f * kotlin.math.atan2(2 * sxy, sxx - syy)
+}
+
+/** Ordena los puntos de una aguja de punta a punta: de izquierda a derecha, o de arriba a abajo si está parada. */
+fun ordenarAguja(p: List<Punto>): List<Punto> {
     if (p.size < 2) return p
-    val ancho = p.maxOf { it.x } - p.minOf { it.x }
-    val alto = p.maxOf { it.y } - p.minOf { it.y }
-    return if (alto > ancho) p.sortedBy { it.y } else p.sortedBy { it.x }
+    val a = anguloAguja(p)
+    var dx = kotlin.math.cos(a)
+    var dy = kotlin.math.sin(a)
+    if (dx < -0.05f || (kotlin.math.abs(dx) <= 0.05f && dy < 0)) {
+        dx = -dx
+        dy = -dy
+    }
+    return p.sortedBy { it.x * dx + it.y * dy }
+}
+
+/** Separa los puntos por aguja (puntos cerca unos de otros) para numerar una aguja entera antes de pasar
+ *  a la siguiente. Las agujas van de izquierda a derecha según dónde empiezan. */
+fun agujas(p: List<Punto>): List<List<Punto>> {
+    if (p.size < 3) return if (p.isEmpty()) emptyList() else listOf(ordenarAguja(p))
+    fun d(a: Punto, b: Punto) = kotlin.math.hypot(a.x - b.x, a.y - b.y)
+    // separación típica: la mediana de la distancia de cada punto a su vecino más cercano
+    val vecino = p.indices.map { i -> p.indices.minOf { j -> if (i == j) Float.MAX_VALUE else d(p[i], p[j]) } }.sorted()
+    val umbral = vecino[vecino.size / 2] * 6 // aguanta algunos puntos sin detectar en el medio de una aguja
+    val grupo = IntArray(p.size) { -1 }
+    var g = 0
+    for (i in p.indices) {
+        if (grupo[i] >= 0) continue
+        grupo[i] = g
+        val pendientes = ArrayDeque(listOf(i))
+        while (pendientes.isNotEmpty()) {
+            val a = pendientes.removeLast()
+            for (j in p.indices) {
+                if (grupo[j] < 0 && d(p[a], p[j]) <= umbral) {
+                    grupo[j] = g
+                    pendientes.add(j)
+                }
+            }
+        }
+        g++
+    }
+    return (0 until g)
+        .map { k -> ordenarAguja(p.filterIndexed { i, _ -> grupo[i] == k }) }
+        .sortedWith(compareBy({ it.first().x }, { it.first().y }))
 }
