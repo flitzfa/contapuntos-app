@@ -1,0 +1,9 @@
+<resources>
+    <color name="ciruela">#24122E</color>
+    <color name="ciruela_clara">#3A1D48</color>
+    <style name="Tema" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ciruela</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,17 @@
+# secretos
+.env
+
+# entorno de Python
+venv/
+__pycache__/
+
+# se generan o se bajan solos (pesan mucho)
+datos/
+resultados/
+modelos/entrenamiento/
+modelos/*.onnx
+yolo11*.pt
+Contapuntos.apk
+
+# fotos de internet con licencias solo para probar (ver fotos_prueba/FUENTES.md)
+fotos_prueba/*.jpg

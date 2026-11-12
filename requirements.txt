@@ -1,0 +1,7 @@
+ultralytics>=8.3
+roboflow
+gradio>=4
+opencv-python
+pyyaml
+onnx
+onnxslim
