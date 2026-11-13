@@ -170,9 +170,10 @@ Para publicar una versión nueva:
    ```
 
 El script sube el número de versión, arma la app, la publica en
-https://github.com/flitzfa/contapuntos-app (Releases) y guarda la versión en Git con su
-etiqueta (`v0.3`, `v0.4`...). Ese repositorio es público y solo tiene las versiones
-publicadas, no el código.
+https://github.com/flitzfa/contapuntos-app (Releases), guarda la versión en Git con su
+etiqueta (`v0.3`, `v0.4`...) y sube el código a ese mismo repositorio. Es público: cualquiera
+ve el código y baja la app, pero solo vos podés cambiarlo. Nunca se suben el `.env`, los datasets
+ni la clave de Android (están fuera de Git).
 
 Importante:
 - Hay que armarla **en esta PC**: la app va firmada con la clave de Android de esta PC
@@ -185,6 +186,7 @@ Importante:
 El proyecto está en Git (no se suben los datasets, resultados, `venv` ni el `.env`).
 `git log --oneline` muestra los cambios, y cada versión publicada tiene su etiqueta:
 `git checkout v0.2` vuelve al código exacto de esa versión (`git checkout main` para volver).
+Para subir cambios guardados sin publicar una versión: `git push origin main`.
 
 ## Qué tocar si cuenta mal
 

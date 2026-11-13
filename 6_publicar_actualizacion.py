@@ -5,7 +5,8 @@ Uso:
     python 6_publicar_actualizacion.py "Qué cambió en esta versión"
 
 Sube el número de versión, arma la app (como el paso 5), la publica en GitHub
-(github.com/flitzfa/contapuntos-app, sección Releases) y guarda la versión en Git.
+(github.com/flitzfa/contapuntos-app, sección Releases), guarda la versión en Git y sube el código
+al mismo repositorio.
 La próxima vez que se abra la app en el celu, ofrece actualizarse.
 
 Requiere:
@@ -74,6 +75,11 @@ def main():
 
     git("commit", "-m", f"Versión {nombre}: {notas}", "--", str(GRADLE.relative_to(config.RAIZ)))
     git("tag", tag)
+    # el código queda en el mismo repo; gh creó el tag sobre lo último subido, se lo mueve a esta versión
+    subido = subprocess.run(["git", "push", "origin", "main"], cwd=config.RAIZ).returncode == 0
+    subido = subido and subprocess.run(["git", "push", "-f", "origin", f"refs/tags/{tag}"], cwd=config.RAIZ).returncode == 0
+    if not subido:
+        print(f"Ojo: la versión se publicó, pero el código no se subió a GitHub. Corré: git push origin main y git push -f origin {tag}")
     print(f"\nListo: versión {nombre} publicada. La app la va a ofrecer la próxima vez que se abra.")
 
 
